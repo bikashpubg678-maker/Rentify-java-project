@@ -354,3 +354,278 @@ This project is licensed under the MIT License — see the LICENSE file for deta
 ---
 
 *If you found this project useful, please give it a star on GitHub!*
+---
+
+## Authentication Architecture
+
+Rentify runs two independent authentication systems side-by-side: the Thymeleaf web UI uses Google OAuth2, and the mobile REST API uses JWT. A single SecurityConfig routes each request to the right chain based on URL pattern.
+
+### Two systems, one app
+
+```
++--------------------------------------------------------------------+
+|                            CLIENT                                  |
+|                                                                    |
+|   Web Browser                              Mobile / JS App         |
+|   (Thymeleaf pages)                        (REST API caller)       |
++----------+----------------------------------------+---------------+
+           | Cookie-based session                   | Bearer token
+           | (JSESSIONID)                           | (Auth header)
+           v                                        v
++------------------------------+    +---------------------------------+
+| /login, /oauth2/**, /        |    | /api/v1/**, /api/chat           |
+| /logout/**, /error, /, /...  |    |                                 |
+|         |                    |    |                                 |
+|         v                    |    |                                 |
+|   Spring Security            |    |   Spring Security               |
+|   oauth2Login()              |    |   http.addFilterBefore(         |
+|        |                     |    |     JwtAuthFilter,              |
+|        v                     |    |     AuthFilter.class)           |
+|  GoogleOAuth2UserService     |    |        |                        |
+|  (upserts User row)          |    |        v                        |
+|        |                     |    |   JwtService.verify()          |
+|        v                     |    |   (HS256, jjwt 0.12.6)         |
+|   AppOidcUser -> SecurityCtx |    |        |                        |
+|   (ROLE_<user.role>)         |    |        v                        |
+|                              |    |   Authentication stored in      |
++----------+-------------------+    |   SecurityContext              |
+           |                        +------------+--------------------+
+           |                                     |
+           +-----------------+-------------------+
+                             v
+              +------------------------------+
+              |  Controllers                  |
+              |  (@PreAuthorize etc.)        |
+              +-------------+----------------+
+                            v
+              +------------------------------+
+              |  CarRentalSystem (service)   |
+              +-------------+----------------+
+                            v
+              +------------------------------+
+              |  JPA Repositories -> H2 DB   |
+              +------------------------------+
+```
+
+### Three SecurityFilterChain beans (order matters)
+
+SecurityConfig declares three chains. Spring Security picks the first whose securityMatcher matches the URL.
+
+| # | Bean             | Matches                                  | Purpose                                                                                  |
+|---|------------------|------------------------------------------|------------------------------------------------------------------------------------------|
+| 1 | apiChain         | /api/v1/**, /api/chat                    | Stateless JWT verification, permitAll at the filter level. JwtAuthFilter decodes if present. |
+| 2 | oauth2Chain      | /login, /oauth2/**, /logout/**, /error   | Hands off to Spring Security OAuth2 login. After Google callback, builds SecurityContext. |
+| 3 | webChain         | /** (everything else)                    | Thymeleaf app. permitAll so anonymous browsing works; OAuth2 chain is the real auth gate. |
+
+The oauth2Login() DSL wires three things:
+- userInfoEndpoint(u -> u.oidcUserService(googleOAuth2UserService)) — custom service replaces Spring's default OidcUserService so we can upsert our own User entity.
+- defaultSuccessUrl("/", true) — always redirect to / after success.
+- failureUrl("/login?error") — back to login page with an error flag on failure.
+
+### Google sign-in flow (end to end)
+
+```
++--------+       +-----------+      +---------+      +-----------+
+|  User  |       |  Rentify  |      | Google  |      |  H2 DB    |
+| (brow) |       | (Spr Sec) |      | OAuth2  |      | User tbl  |
++----+---+       +-----+-----+      +----+----+      +-----+-----+
+     | 1. GET /login   |                  |                 |
+     |---------------->|                  |                 |
+     | 2. login.html   |                  |                 |
+     |<----------------|                  |                 |
+     | 3. click "Sign in" -> /oauth2/authorization/google    |
+     |---------------->|                  |                 |
+     | 4. 302 to Google consent           |                 |
+     |<----------------|                  |                 |
+     | 5. user picks account + consents  |                 |
+     |---------------------------------->|                 |
+     | 6. 302 to /login/oauth2/code/google?code=...         |
+     |<----------------------------------|                 |
+     | 7. code + state                   |                 |
+     |---------------->|                  |                 |
+     | 8. POST to Google token endpoint  |                 |
+     |---------------------------------->|                 |
+     | 9. access_token + id_token (JWT)  |                 |
+     |<----------------------------------|                 |
+     | 10. Spring decodes id_token       |                 |
+     |---------------->|                  |                 |
+     | 11. GoogleOAuth2UserService.loadUser()              |
+     |    (a) findByProviderAndProviderId("GOOGLE", sub)   |
+     |--------------------------------------------------->|
+     |    (b) if none, findByEmailIgnoreCase() -> link     |
+     |--------------------------------------------------->|
+     |    (c) if still none, User.fromGoogle(...) -> save  |
+     |--------------------------------------------------->|
+     | 12. AppOidcUser(OidcUser, User) wrapped as Authn    |
+     | 13. SecurityContextHolder populated                 |
+     | 14. 302 to /                                       |
+     |<----------------|                                   |
+     | 15. navbar shows "Sign out" (sec:authorize)         |
+```
+
+### The custom User entity (Google-aware)
+
+```java
+@Entity
+@Table(name = "users", uniqueConstraints = {
+    @UniqueConstraint(columnNames = {"provider", "providerId"})
+})
+public class User {
+    @Id @GeneratedValue private Long id;
+    private String displayName;
+    private String email;
+
+    // Google OAuth fields
+    @Enumerated(EnumType.STRING) private Provider provider;   // LOCAL | GOOGLE
+    private String providerId;                               // Google "sub"
+    private String avatarUrl;                                // Google "picture"
+    private String passwordHash;                             // nullable for Google users
+
+    public static User fromGoogle(String email, String name, String sub, String picture) {
+        User u = new User();
+        u.provider = Provider.GOOGLE;
+        u.providerId = sub;
+        u.email = email;
+        u.displayName = name;
+        u.avatarUrl = picture;
+        return u;
+    }
+}
+```
+
+Why nullable passwordHash? Local username/password users keep a BCrypt hash; Google users have null and can never log in via password — only via the OAuth chain.
+
+### Why AppOidcUser wraps OidcUser
+
+OidcUser carries Google's raw claims (sub, email, picture, etc.). Our controllers want our own User entity (so they can use email, displayName, role). AppOidcUser implements OidcUser and delegates every standard method, but exposes getAppUser() for use with @AuthenticationPrincipal in controllers or sec:authentication in Thymeleaf.
+
+```java
+public class AppOidcUser implements OidcUser {
+    private final OidcUser delegate;   // Google's claims
+    private final User appUser;        // Our DB row
+
+    @Override public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of(new SimpleGrantedAuthority("ROLE_" + appUser.getRole()));
+    }
+    @Override public String getName() { return appUser.getDisplayName(); }
+    // ...other OidcUser methods just delegate...
+}
+```
+
+### How login.html and layout.html work together
+
+templates/login.html is rendered by LoginController:
+
+```java
+@GetMapping("/login")
+public String loginPage(@RequestParam(required=false) String error, Model model) {
+    if (error != null) model.addAttribute("error", "Sign-in failed. Please try again.");
+    return "login";
+}
+```
+
+The page shows a centered card with a single "Continue with Google" button linking to /oauth2/authorization/google — that path is provided automatically by spring-boot-starter-oauth2-client.
+
+In layout.html the html tag declares xmlns:sec pointing at the thymeleaf-extras-springsecurity6 namespace, and the navbar has:
+
+```html
+<li sec:authorize="isAnonymous()"><a href="/oauth2/authorization/google">Sign in</a></li>
+<li sec:authorize="isAuthenticated()">
+  <span sec:authentication="principal.attributes['name']">User</span>
+  <form th:action="@{/logout}" method="post"><button>Sign out</button></form>
+</li>
+```
+
+The Sign out form POSTs to /logout, which Spring Security's LogoutFilter handles (invalidates session, redirects to /login?logout).
+
+### Render env vars you must set
+
+| Key                  | Value                                       |
+|----------------------|---------------------------------------------|
+| GOOGLE_CLIENT_ID     | xxxxx.apps.googleusercontent.com            |
+| GOOGLE_CLIENT_SECRET | GOCSPX-...                                  |
+
+And in Google Cloud Console -> Credentials -> your OAuth client -> Authorized redirect URIs:
+
+```
+https://rentify-ifs4.onrender.com/login/oauth2/code/google
+```
+
+Without that exact URI Google returns redirect_uri_mismatch.
+
+---
+
+## Full Application Architecture
+
+```
++------------------------------------------------------------------------+
+|                       BROWSER  (any device)                            |
+|                                                                        |
+|   /  /rent  /return  /history  /charts  /cars  /customer  /activity   |
+|   /about  /agreement/{id}  /export/csv  /login                        |
+|                                                                        |
+|   Floating AI Chatbot  (POST /api/chat)                                |
++----------------+-------------------------------------+-----------------+
+                 | HTML / form POST                    | JSON / Bearer
+                 |                                     |
+        +--------v-----------+                +--------v----------+
+        |    webChain        |                |     apiChain      |
+        |  Spring Security   |                |  JwtAuthFilter -> |
+        |  + oauth2Login()   |                |  SecurityContext  |
+        +--------+-----------+                +---------+---------+
+                 |                                      |
+                 v                                      v
+        +-------------------+                +-------------------+
+        |  RentalController |                |  AuthController   |
+        |  (Thymeleaf views)|                |  ChatController   |
+        |  LoginController  |                |  ApiException...  |
+        +---------+---------+                +---------+---------+
+                  |                                    |
+                  +-----------+------------+-----------+
+                              v
+                  +--------------------------+
+                  |      CarRentalSystem     |
+                  |  - Fleet / Cars / Rentals |
+                  |  - Customers / Loyalty   |
+                  |  - PDF Receipts          |
+                  |  - Charts & Analytics    |
+                  |  - Activity Log          |
+                  |  - CSV Export            |
+                  +-------------+------------+
+                                v
+                  +--------------------------+
+                  |  JPA Repositories        |
+                  |  CarRepository           |
+                  |  RentalRepository        |
+                  |  CustomerRepository      |
+                  |  UserRepository (LOCAL+GOOGLE) |
+                  +-------------+------------+
+                                v
+                  +--------------------------+
+                  |   H2 In-Memory DB        |
+                  |   jdbc:h2:mem:autorentdb |
+                  +--------------------------+
+                                |
+                  +-------------v-------------+
+                  |   External: OpenRouter     |
+                  |   (LLM chat completions)   |
+                  +---------------------------+
+```
+
+### Request lifecycle example — "Rent a car"
+
+1. User fills /rent form -> POST to /rent.
+2. webChain SecurityFilterChain passes it through (form endpoints are public for the demo).
+3. RentalController.rentPage(...) parses form, calls CarRentalSystem.createRental(carId, customerId, days).
+4. CarRentalSystem mutates in-memory state, adds to activity log, generates a receipt ID.
+5. Controller returns "redirect:/agreement/{id}".
+6. Browser follows redirect -> RentalController.agreementPage(...) renders Thymeleaf template with rental details.
+7. User can then /return or /export/csv the rental.
+
+### Why the JWT chain still exists alongside OAuth
+
+The project doubles as a REST API for mobile clients (/api/v1/auth/login, /api/v1/cars, ...). Mobile clients cannot do Google web redirects cleanly, so they use username + password -> receive a JWT -> send it as Authorization header. The two chains never collide because:
+
+- /api/** paths match apiChain first -> only JwtAuthFilter runs.
+- Browser paths never hit /api/** -> only webChain + oauth2Chain run.
+- Both chains end up writing to the same SecurityContextHolder, so any @PreAuthorize("hasRole('ADMIN')") check works regardless of how the user authenticated.
