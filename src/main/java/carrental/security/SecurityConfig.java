@@ -3,6 +3,7 @@ package carrental.security;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -11,20 +12,25 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.http.HttpStatus;
 
 /**
- * Two filter chains:
- *   1. /api/v1/** + /api/chat — stateless JWT, public login + register, auth required after.
- *   2. everything else — the existing Thymeleaf web app, fully open, untouched.
+ * Three filter chains, evaluated in order. The first matcher wins.
+ *
+ * <ol>
+ *   <li><b>apiChain</b> — {@code /api/v1/**} and {@code /api/chat}. Stateless JWT, public login + register.</li>
+ *   <li><b>oauth2Chain</b> — {@code /login}, {@code /oauth2/**}, {@code /logout}. Enables Google OAuth2 login.</li>
+ *   <li><b>webChain</b> — everything else. Existing Thymeleaf app, fully open.</li>
+ * </ol>
  */
 @Configuration
 public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
+    private final GoogleOAuth2UserService googleOAuth2UserService;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthFilter jwtAuthFilter, GoogleOAuth2UserService googleOAuth2UserService) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.googleOAuth2UserService = googleOAuth2UserService;
     }
 
     @Bean
@@ -32,6 +38,7 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+    // ── 1. REST API: stateful JWT, no OAuth ───────────────────────────────
     @Bean
     public SecurityFilterChain apiChain(HttpSecurity http) throws Exception {
         http
@@ -50,6 +57,27 @@ public class SecurityConfig {
         return http.build();
     }
 
+    // ── 2. OAuth2 web login ───────────────────────────────────────────────
+    @Bean
+    public SecurityFilterChain oauth2Chain(HttpSecurity http) throws Exception {
+        http
+            .securityMatcher("/login", "/login/**", "/oauth2/**", "/logout/**", "/error")
+            .csrf(c -> c.ignoringRequestMatchers("/oauth2/**", "/login/**", "/logout/**"))
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
+            .oauth2Login(oauth -> oauth
+                .loginPage("/login")
+                .userInfoEndpoint(u -> u.oidcUserService(googleOAuth2UserService))
+                .defaultSuccessUrl("/", true)
+                .failureUrl("/login?error"))
+            .logout(l -> l
+                .logoutUrl("/logout")
+                .logoutSuccessUrl("/")
+                .deleteCookies("JSESSIONID")
+                .invalidateHttpSession(true));
+        return http.build();
+    }
+
+    // ── 3. Public Thymeleaf pages (REST + chat excluded above) ────────────
     @Bean
     public SecurityFilterChain webChain(HttpSecurity http) throws Exception {
         http
