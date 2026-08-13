@@ -4,6 +4,7 @@ import carrental.api.dto.Dtos;
 import carrental.model.User;
 import carrental.repository.UserRepository;
 import carrental.security.JwtService;
+import carrental.security.UserPrincipal;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -58,12 +59,13 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> me(@org.springframework.security.core.annotation.AuthenticationPrincipal User user) {
-        if (user == null) {
+    public ResponseEntity<?> me(@org.springframework.security.core.annotation.AuthenticationPrincipal UserPrincipal principal) {
+        if (principal == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .body(new Dtos.ErrorResponse("unauthorized", "Missing or invalid bearer token."));
         }
-        return ResponseEntity.ok(toDto(user));
+        return ResponseEntity.ok(new Dtos.UserDto(
+                principal.id(), principal.email(), principal.displayName(), principal.role()));
     }
 
     private ResponseEntity<?> ok(User u) {

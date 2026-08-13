@@ -31,12 +31,17 @@ public class JwtService {
     @PostConstruct
     void init() {
         // HS256 requires at least 256 bits (32 bytes) of key material.
+        // Refuse to start with a short / placeholder secret in production.
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
         if (bytes.length < 32) {
-            // Pad up to 32 bytes if the configured secret is too short.
-            byte[] padded = new byte[32];
-            System.arraycopy(bytes, 0, padded, 0, bytes.length);
-            bytes = padded;
+            throw new IllegalStateException(
+                "rentify.jwt.secret must be at least 32 bytes; got " + bytes.length
+                + ". Set RENTIFY_JWT_SECRET to a strong random value.");
+        }
+        if (secret.contains("CHANGE-ME") || secret.contains("please-override")) {
+            throw new IllegalStateException(
+                "rentify.jwt.secret is still the placeholder default. "
+                + "Set RENTIFY_JWT_SECRET to a strong random value before starting.");
         }
         this.key = Keys.hmacShaKeyFor(bytes);
     }

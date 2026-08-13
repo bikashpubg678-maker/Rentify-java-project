@@ -13,6 +13,7 @@ import java.util.Optional;
 public interface RentalRepository extends JpaRepository<Rental, Long> {
     List<Rental> findByStatus(Rental.Status status);
     Optional<Rental> findByCarAndStatus(Car car, Rental.Status status);
+    Optional<Rental> findByCar_CarIdAndStatus(String carId, Rental.Status status);
 
     // Check overlapping bookings for double-booking prevention
     @Query("SELECT r FROM Rental r WHERE r.car = :car AND r.status = 'ACTIVE' " +
