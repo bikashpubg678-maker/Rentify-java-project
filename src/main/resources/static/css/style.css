@@ -5,6 +5,14 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* ── Auth gate: hide protected pages until auth.js confirms the user ──
+   auth.js sets body[data-auth-ok="1"] once authentication is verified
+   (or the page is on the public allow-list). Pages that need this gate
+   should set <body data-auth-required> in the layout fragment. */
+body[data-auth-required]:not([data-auth-ok="1"]) {
+  visibility: hidden;
+}
+
 :root {
   --bg:       #0c0f18;
   --bg2:      #131929;

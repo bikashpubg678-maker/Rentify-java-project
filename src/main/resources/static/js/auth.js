@@ -17,7 +17,12 @@
   const IAT_KEY    = 'rentify_jwt_iat';
   const LOCK_KEY   = 'rentify_lockout';          // {email: {count, untilMs}}
   const ACTIVITY_KEY = 'rentify_last_activity';
-  const PROTECTED_PATHS = ['/rent', '/return', '/cars'];
+  // Pages a signed-out user is allowed to view.
+  // Everything else (Rent, Return, History, Charts, Manage, Customers, Activity, AI, etc.)
+  // requires either a JWT or a server-side OIDC principal.
+  const PUBLIC_PATHS = ['/login', '/about', '/', '/error'];
+  // Pages where idle auto-logout applies (form-heavy pages where JWT matters).
+  const IDLE_PROTECTED_PATHS = ['/rent', '/return', '/cars'];
   const IDLE_LIMIT_MS = 30 * 60 * 1000;          // 30 min
   const IDLE_WARN_MS  = 28 * 60 * 1000;          // warn at 28 min
   const LOCK_TIERS = [
@@ -337,7 +342,7 @@
 
   // ── Idle enforcement on protected pages ────────────────────────────────
   const path = window.location.pathname;
-  const isProtected = PROTECTED_PATHS.some(p => path === p || path.startsWith(p + '/'));
+  const isProtected = IDLE_PROTECTED_PATHS.some(p => path === p || path.startsWith(p + '/'));
   let idleWarned = false;
   function checkIdle() {
     if (!isLoggedIn() || !isProtected) return;
@@ -379,6 +384,45 @@
       el.textContent = `${mm}:${ss}`;
       if (remaining <= 0) clearInterval(t);
     }, 1000);
+  }
+
+  // ── Route guard: redirect anonymous users to /login ──────────────────
+  // A user is considered authenticated if EITHER:
+  //   (a) they have a non-expired JWT in localStorage, OR
+  //   (b) the server-rendered navbar contains a non-empty data-oidc-name
+  //       (i.e. they are signed in via Google OAuth2).
+  // Without either, any path not in PUBLIC_PATHS bounces to /login?next=...
+  function isOidcUser() {
+    const slot = document.getElementById('session-slot');
+    return !!(slot && (slot.dataset.oidcName || '').trim());
+  }
+
+  function enforceAuthGuard() {
+    const path = window.location.pathname || '/';
+
+    // Static assets, OAuth2 endpoints, and the login/error pages are always reachable
+    if (path.startsWith('/oauth2/') || path.startsWith('/login/oauth2/')) { document.body.setAttribute('data-auth-ok', '1'); return; }
+    if (path.startsWith('/css/') || path.startsWith('/js/') || path.startsWith('/images/')) { document.body.setAttribute('data-auth-ok', '1'); return; }
+    if (path === '/favicon.ico' || path === '/robots.txt') { document.body.setAttribute('data-auth-ok', '1'); return; }
+
+    // Explicit allow-list
+    if (PUBLIC_PATHS.includes(path)) { document.body.setAttribute('data-auth-ok', '1'); return; }
+
+    // Already authenticated → mark ok and return
+    if (isLoggedIn() || isOidcUser()) { document.body.setAttribute('data-auth-ok', '1'); return; }
+
+    // Bail out: bounce to login, preserving the requested destination
+    const next = encodeURIComponent(path + window.location.search);
+    // Use replace() so the protected page does not end up in browser history
+    window.location.replace('/login?next=' + next);
+  }
+
+  // Run as early as possible. If the document is already interactive or complete,
+  // call directly; otherwise queue for DOMContentLoaded (fires before window.load).
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', enforceAuthGuard, { once: true });
+  } else {
+    enforceAuthGuard();
   }
 
   // ── Session pill in navbar ────────────────────────────────────────────
