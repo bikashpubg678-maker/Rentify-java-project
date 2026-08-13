@@ -8,6 +8,7 @@ import carrental.service.PdfService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -33,7 +34,11 @@ public class RentalController {
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
     @GetMapping("/")
-    public String dashboard(Model model) {
+    public String dashboard(Model model, Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()
+                || "anonymousUser".equals(auth.getPrincipal())) {
+            return "redirect:/login";
+        }
         model.addAttribute("cars", system.getAllCars());
         model.addAttribute("totalCars", system.totalCars());
         model.addAttribute("available", system.availableCars());
