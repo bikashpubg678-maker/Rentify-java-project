@@ -13,7 +13,8 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-import jakarta.servlet.http.HttpSession;
+import carrental.security.AppOidcUser;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -35,13 +36,14 @@ public class RentalController {
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
     @GetMapping("/")
-    public String dashboard(Model model, HttpSession session) {
-        // Spring Security stores the OAuth2 login under this session attribute.
+    public String dashboard(@AuthenticationPrincipal AppOidcUser user,
+                            Model model) {
+        // Spring Security exposes the OAuth2 principal via @AuthenticationPrincipal.
         // Anonymous (and never-signed-in) visitors won't have it.
-        Object oauth = session.getAttribute("oauth2Authentication");
-        if (oauth == null) {
+        if (user == null) {
             return "redirect:/login";
         }
+        model.addAttribute("currentUser", user.getAppUser());
         model.addAttribute("cars", system.getAllCars());
         model.addAttribute("totalCars", system.totalCars());
         model.addAttribute("available", system.availableCars());
