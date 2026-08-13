@@ -77,7 +77,7 @@ public class SecurityConfig {
         return http.build();
     }
 
-    // ── 3. Thymeleaf app pages — require login everywhere except OAuth and static ──
+    // ── 3. Public Thymeleaf pages (REST + chat excluded above) ────────────
     @Bean
     public SecurityFilterChain webChain(HttpSecurity http) throws Exception {
         http
@@ -85,15 +85,8 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
             .formLogin(AbstractHttpConfigurer::disable)
-            .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                    "/css/**", "/js/**", "/images/**", "/webjars/**",
-                    "/favicon.ico", "/h2-console/**"
-                ).permitAll()
-                .anyRequest().authenticated())
-            .exceptionHandling(e -> e
-                .authenticationEntryPoint((request, response, ex) ->
-                    response.sendRedirect("/login")));
+            .logout(AbstractHttpConfigurer::disable)
+            .authorizeHttpRequests(auth -> auth.anyRequest().permitAll());
         return http.build();
     }
 }
