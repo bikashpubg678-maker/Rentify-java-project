@@ -5,10 +5,12 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Map;
 
@@ -26,22 +28,31 @@ public class JwtService {
     @Value("${rentify.jwt.ttl-millis:2592000000}") // 30 days
     private long ttlMillis;
 
+    private final Environment env;
     private SecretKey key;
+
+    public JwtService(Environment env) {
+        this.env = env;
+    }
 
     @PostConstruct
     void init() {
-        // HS256 requires at least 256 bits (32 bytes) of key material.
-        // Refuse to start with a short / placeholder secret in production.
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
-        if (bytes.length < 32) {
-            throw new IllegalStateException(
-                "rentify.jwt.secret must be at least 32 bytes; got " + bytes.length
-                + ". Set RENTIFY_JWT_SECRET to a strong random value.");
-        }
-        if (secret.contains("CHANGE-ME") || secret.contains("please-override")) {
-            throw new IllegalStateException(
-                "rentify.jwt.secret is still the placeholder default. "
-                + "Set RENTIFY_JWT_SECRET to a strong random value before starting.");
+        boolean isProd = Arrays.asList(env.getActiveProfiles()).contains("prod");
+
+        // Production must use a real secret. Dev/test keep the placeholder
+        // so the app boots out-of-the-box without extra configuration.
+        if (isProd) {
+            if (bytes.length < 32) {
+                throw new IllegalStateException(
+                    "rentify.jwt.secret must be at least 32 bytes; got " + bytes.length
+                    + ". Set RENTIFY_JWT_SECRET to a strong random value.");
+            }
+            if (secret.contains("CHANGE-ME") || secret.contains("please-override")) {
+                throw new IllegalStateException(
+                    "rentify.jwt.secret is still the placeholder default. "
+                    + "Set RENTIFY_JWT_SECRET to a strong random value before starting.");
+            }
         }
         this.key = Keys.hmacShaKeyFor(bytes);
     }
