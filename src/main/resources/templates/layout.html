@@ -33,7 +33,8 @@
                 <a href="/about" class="nav-link" th:classappend="${#httpServletRequest != null and #httpServletRequest.requestURI == '/about' ? 'active' : ''}">About</a>
         <a href="#" class="nav-link" onclick="toggleChatbot(); return false;">AI Assistant</a>
                   <!-- Session slot: auth.js renders Google-sign-in link OR a JWT session pill -->
-          <li id="session-slot" class="nav-item" style="list-style:none" data-oidc-name="${#authentication?.principal?.attributes?.name ?: ''}">
+          <li id="session-slot" class="nav-item" style="list-style:none"
+              th:attr="data-oidc-name=${#authentication?.principal?.attributes?.name ?: ''}">
             <!-- Fallback Google link (always present, replaced by auth.js when JWT is set) -->
             <a href="/oauth2/authorization/google" class="nav-link" data-fallback-signin
                style="display:inline-flex;align-items:center;gap:6px">
