@@ -8,11 +8,12 @@ import carrental.service.PdfService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+
+import jakarta.servlet.http.HttpSession;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -34,9 +35,11 @@ public class RentalController {
 
     // ── Dashboard ─────────────────────────────────────────────────────────────
     @GetMapping("/")
-    public String dashboard(Model model, Authentication auth) {
-        if (auth == null || !auth.isAuthenticated()
-                || "anonymousUser".equals(auth.getPrincipal())) {
+    public String dashboard(Model model, HttpSession session) {
+        // Spring Security stores the OAuth2 login under this session attribute.
+        // Anonymous (and never-signed-in) visitors won't have it.
+        Object oauth = session.getAttribute("oauth2Authentication");
+        if (oauth == null) {
             return "redirect:/login";
         }
         model.addAttribute("cars", system.getAllCars());
