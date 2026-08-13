@@ -32,10 +32,12 @@
                 <a href="/activity" class="nav-link" th:classappend="${#httpServletRequest != null and #httpServletRequest.requestURI == '/activity' ? 'active' : ''}">Activity</a>
                 <a href="/about" class="nav-link" th:classappend="${#httpServletRequest != null and #httpServletRequest.requestURI == '/about' ? 'active' : ''}">About</a>
         <a href="#" class="nav-link" onclick="toggleChatbot(); return false;">AI Assistant</a>
-                  <!-- Google OAuth login / user menu -->
-          <li class="nav-item" sec:authorize="isAnonymous()" style="list-style:none">
-            <a href="/oauth2/authorization/google" class="nav-link" style="display:inline-flex;align-items:center;gap:6px">
-              <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <!-- Session slot: auth.js renders Google-sign-in link OR a JWT session pill -->
+          <li id="session-slot" class="nav-item" style="list-style:none" data-oidc-name="${#authentication?.principal?.attributes?.name ?: ''}">
+            <!-- Fallback Google link (always present, replaced by auth.js when JWT is set) -->
+            <a href="/oauth2/authorization/google" class="nav-link" data-fallback-signin
+               style="display:inline-flex;align-items:center;gap:6px">
+              <svg width="16" height="16" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.99.66-2.25 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/>
                 <path fill="#FBBC05" d="M5.84 14.1A6.6 6.6 0 0 1 5.49 12c0-.73.13-1.43.35-2.1V7.07H2.18A11 11 0 0 0 1 12c0 1.77.43 3.45 1.18 4.93l3.66-2.83z"/>
@@ -43,16 +45,6 @@
               </svg>
               Sign in
             </a>
-          </li>
-          <li class="nav-item" sec:authorize="isAuthenticated()" style="list-style:none;display:flex;align-items:center;gap:10px">
-            <span class="nav-link" style="padding:0;display:inline-flex;align-items:center;gap:6px">
-              <span sec:authentication="principal.attributes['name']" style="font-weight:600">User</span>
-            </span>
-            <form th:action="@{/logout}" method="post" style="display:inline;margin:0">
-              <button type="submit" class="nav-link" style="background:none;border:none;cursor:pointer;font:inherit;color:inherit;padding:0">
-                Sign out
-              </button>
-            </form>
           </li>
           <button id="theme-toggle" class="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme">&#9681;</button>
     </div>
@@ -66,6 +58,7 @@
         <p>Built by <strong>Bikash Talukder</strong> &nbsp;·&nbsp; Rentify v2.0 &nbsp;·&nbsp; Java + Spring Boot</p>
     </footer>
     <script th:src="@{/js/app.js}"></script>
+    <script th:src="@{/js/auth.js}"></script>
     <!-- Floating Chat Toggle Button -->
     <button id="chatbot-toggle-btn" onclick="toggleChatbot()" aria-label="Open AI Assistant"></button>
 
